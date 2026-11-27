@@ -2,9 +2,9 @@
 
 | Campo | Valor |
 |---|---|
-| Versión | 2.0 |
-| Fecha | 2026-11-20 |
-| Fuente | `docs/00-borrador-requerimientos.md` y sesión de definición del 2026-11-20 |
+| Versión | 2.1 |
+| Fecha | 2026-11-27 |
+| Fuente | Sesiones de definición del 2026-11-20 y del 2026-11-27 |
 | Glosario | `GLOSSARY.md` (términos canónicos) |
 | Decisiones de arquitectura | `docs/adr/` |
 | Siguiente documento | `docs/02-diseno.md` |
@@ -41,6 +41,7 @@ El sistema **no** se usa durante la operación en terreno y **no** registra nada
 - Uso en línea, sincronización entre equipos o integraciones externas.
 - Reportes exportables (PDF, Excel).
 - Restauración de respaldos desde la aplicación (procedimiento manual).
+- Importación de datos desde la aplicación: los datos históricos se cargan con una conversión única fuera de ella (D-21).
 - Agrupación quincenal en el dashboard.
 - Registro de temporadas con fechas fijas.
 - Gestión de inventario o equipos.
@@ -70,9 +71,9 @@ Términos derivados usados en este documento:
 
 | ID | Regla |
 |---|---|
-| RN-01 | Una venta corresponde a una reserva y pertenece a un solo día: la **fecha de la actividad**. Se registra ese día o después, nunca antes. |
-| RN-02 | Una venta contiene uno o más ítems; cada ítem indica un servicio y una cantidad de personas (≥ 1). |
-| RN-03 | El precio unitario de cada ítem es el **precio vigente del servicio a la fecha de la actividad**. Una vez guardado, queda fijo aunque luego cambie el catálogo. |
+| RN-01 | Una venta corresponde a una reserva y pertenece a un solo día: la **fecha de la actividad**. Se registra ese día o después, nunca antes: una fecha posterior a hoy se rechaza. |
+| RN-02 | Una venta contiene uno o más ítems; cada ítem indica un servicio y una cantidad de personas (≥ 1). Una venta tiene como máximo un ítem por servicio. |
+| RN-03 | El precio unitario de cada ítem es el **precio vigente del servicio a la fecha de la actividad**; el administrador no lo edita (una rebaja se registra como descuento). Una vez guardado, queda fijo aunque luego cambie el catálogo. Al editar una venta guardada: los ítems que conservan su servicio conservan su precio; un ítem nuevo o con otro servicio toma el precio vigente; si cambia la fecha, todos los ítems toman el precio vigente a la nueva fecha, con aviso antes de guardar. |
 | RN-04 | No se registran datos de clientes, solo cantidades de personas por servicio. |
 | RN-05 | Un **curso** que dura varios días se registra una sola vez, en su fecha de inicio. |
 
@@ -112,21 +113,21 @@ Términos derivados usados en este documento:
 | ID | Regla |
 |---|---|
 | RN-22 | Cada servicio tiene un precio por período de vigencia. Al cambiar el precio se crea una nueva vigencia; las anteriores se conservan. |
-| RN-23 | Cada servicio tiene una comisión por persona, con la misma lógica de vigencias. La comisión es igual para todos los guías. |
+| RN-23 | Cada servicio tiene una comisión por persona, con la misma lógica de vigencias. La comisión es igual para todos los guías. Cada asignación conserva la comisión vigente a su fecha al registrarla; un cambio de comisión no altera asignaciones ya registradas (ADR-0003). Al volver a guardar un día, una asignación de un guía y servicio que ya existía conserva su comisión. |
 | RN-24 | Cada trabajador tiene un sueldo diario propio, con la misma lógica de vigencias. |
-| RN-25 | El valor aplicable a una fecha es el de la vigencia más reciente cuya fecha de inicio sea ≤ a esa fecha. Si no existe ninguna, el sistema impide registrar la operación y pide definir el valor. |
+| RN-25 | El valor aplicable a una fecha es el de la vigencia más reciente cuya fecha de inicio sea ≤ a esa fecha. Si no existe ninguna, el sistema impide registrar la operación y pide definir el valor. Una vigencia puede empezar en el pasado o en el futuro, y se puede corregir o eliminar: solo afecta los registros que se hagan después. |
 
 ### 5.6 Remuneraciones
 
 | ID | Regla |
 |---|---|
 | RN-26 | Pago de un guía en un día = Σ (comisión vigente del servicio × personas asignadas ese día) + bonos de ese día. |
-| RN-27 | Al dueño no se le calcula pago (siempre 0), aunque tenga asignaciones. |
+| RN-27 | Al dueño no se le calcula pago (siempre 0), aunque tenga asignaciones, y no recibe bonos. Hay como máximo un dueño, y solo se puede marcar o desmarcar como dueño a un guía sin asignaciones ni bonos. |
 | RN-28 | Pago de un trabajador en un día = monto del día trabajado + bonos de ese día. |
 | RN-29 | Un trabajador tiene como máximo un registro de día trabajado por fecha. El registro guarda el monto pagado ese día, propuesto desde el sueldo vigente y editable. |
-| RN-30 | Los bonos son manuales, sin reglas automáticas. Cada bono se asocia a una persona y a un día, y se imputa en esa fecha aunque se ingrese después. Un guía puede recibir bono en un día sin asignaciones. |
+| RN-30 | Los bonos son manuales, sin reglas automáticas. Cada bono se asocia a una persona y a un día, y se imputa en esa fecha aunque se ingrese después. Un guía puede recibir bono en un día sin asignaciones. El dueño no recibe bonos (RN-27). |
 | RN-31 | El sistema calcula cuánto ganó cada guía y trabajador; no registra si ya se le pagó. |
-| RN-32 | Un trabajador no actúa como guía y viceversa; si ocurre, se registra como dos personas distintas. |
+| RN-32 | Un trabajador no actúa como guía y viceversa; si ocurre, se registra como dos personas distintas. El rol se fija al crear la persona y no cambia. |
 
 ### 5.7 Costos y otros ingresos
 
@@ -151,8 +152,10 @@ Términos derivados usados en este documento:
 
 | ID | Regla |
 |---|---|
-| RN-42 | El administrador puede editar o eliminar cualquier registro. Las eliminaciones piden confirmación. |
+| RN-42 | El administrador puede editar o eliminar cualquier registro. Las eliminaciones piden confirmación. Un servicio, persona, categoría o motivo sin registros asociados se elimina (con sus vigencias); con registros, solo se desactiva. Las categorías de costo fijas no se eliminan ni se renombran, pero se pueden desactivar. |
 | RN-43 | Toda edición vuelve a validar las reglas de negocio. Los cálculos siempre reflejan los datos actuales. |
+| RN-44 | Un elemento desactivado (servicio, persona, categoría, motivo) no se ofrece en registros nuevos, pero se conserva en los registros existentes, que se pueden editar y guardar sin cambiarlo. |
+| RN-45 | Ninguna asignación, día trabajado, bono, costo u otro ingreso se registra con fecha posterior a hoy. Las vigencias sí pueden tener fecha futura. |
 
 ## 6. Requerimientos funcionales
 
@@ -160,7 +163,7 @@ Términos derivados usados en este documento:
 
 | ID | Requerimiento | Prioridad |
 |---|---|---|
-| RF-01 | Crear, editar y desactivar servicios (nombre, estado activo). | Alta |
+| RF-01 | Crear, editar, desactivar y eliminar servicios (nombre, estado activo). | Alta |
 | RF-02 | Gestionar el histórico de precios de cada servicio: agregar vigencia (fecha desde, precio), ver y corregir. | Alta |
 | RF-03 | Gestionar el histórico de comisiones por servicio, con la misma interfaz. | Alta |
 | RF-04 | Mostrar el precio y la comisión vigentes hoy en el listado de servicios. | Media |
@@ -169,11 +172,11 @@ Términos derivados usados en este documento:
 
 | ID | Requerimiento | Prioridad |
 |---|---|---|
-| RF-05 | Crear, editar y desactivar guías. Marcar a una persona como dueño. | Alta |
-| RF-06 | Crear, editar y desactivar trabajadores. | Alta |
+| RF-05 | Crear, editar, desactivar y eliminar guías. Marcar a un guía como dueño (RN-27). | Alta |
+| RF-06 | Crear, editar, desactivar y eliminar trabajadores. | Alta |
 | RF-07 | Gestionar el histórico de sueldo diario de cada trabajador. | Alta |
 | RF-08 | Registrar días trabajados, individualmente o marcando varios trabajadores para un mismo día. Monto propuesto desde el sueldo vigente y editable. Impedir duplicados por trabajador y fecha. | Alta |
-| RF-09 | Registrar bonos para guías o trabajadores: persona, fecha, monto y nota opcional. | Alta |
+| RF-09 | Registrar bonos para guías (salvo el dueño) o trabajadores: persona, fecha, monto y nota opcional. | Alta |
 
 ### 6.3 Ventas
 
@@ -217,7 +220,7 @@ Términos derivados usados en este documento:
 | ID | Requerimiento | Prioridad |
 |---|---|---|
 | RF-27 | Ventas por servicio (personas atendidas y monto neto) agrupadas por día o mes. | Alta |
-| RF-28 | Comparación del mismo rango de fechas en dos años distintos (p. ej. 15-12 al 28-02 de una temporada contra el mismo tramo de otra), en personas atendidas y en dinero, total y por servicio, con diferencia absoluta y porcentual. El rango puede cruzar el cambio de año; el 29-02 se toma como 28-02 en años no bisiestos. | Alta |
+| RF-28 | Comparación del mismo rango de fechas en dos años distintos (p. ej. 15-12 al 28-02 de una temporada contra el mismo tramo de otra), en personas atendidas y en dinero, total y por servicio, con diferencia absoluta y porcentual. El año de comparación corresponde al inicio del rango, y ambos extremos se trasladan la misma cantidad de años; el rango puede cruzar el cambio de año; el 29-02 se toma como 28-02 en años no bisiestos. La variación es (rango elegido − rango de comparación) / rango de comparación; con base 0 se muestra "sin base". | Alta |
 | RF-29 | Ganancias de cada guía y trabajador por período. | Alta |
 | RF-30 | Costos por período y por categoría. | Alta |
 | RF-31 | Utilidad por período: ingresos (ventas netas, abonos retenidos, otros ingresos), remuneraciones, costos y utilidad. | Alta |
@@ -279,13 +282,24 @@ Términos derivados usados en este documento:
 | D-09 | 2026-11-20 | Los otros ingresos son un registro aparte, con categoría y sin descripción. |
 | D-10 | 2026-11-20 | Un curso se registra y comisiona una sola vez, en su fecha de inicio. |
 | D-11 | 2026-11-20 | Un guía puede recibir bono en un día sin asignaciones (cierra P-06). |
+| D-12 | 2026-11-27 | El dueño no gana comisión ni bonos; hay como máximo uno y la marca solo cambia en un guía sin asignaciones ni bonos (RN-27). |
+| D-13 | 2026-11-27 | El precio unitario no se edita; al editar una venta, los ítems conservan su precio salvo que cambie su servicio o la fecha de la venta (RN-03). Un ítem por servicio (RN-02). |
+| D-14 | 2026-11-27 | La comisión queda fija en cada asignación al registrarla; las vigencias se corrigen o eliminan libremente y solo afectan registros nuevos (ADR-0003, RN-23, RN-25). |
+| D-15 | 2026-11-27 | Comparación entre años: el año de comparación es el del inicio del rango y es la base de la variación (RF-28). |
+| D-16 | 2026-11-27 | No se registran hechos con fecha futura; las vigencias sí (RN-01, RN-45). |
+| D-17 | 2026-11-27 | El rol de una persona no cambia (RN-32). |
+| D-18 | 2026-11-27 | Sin registros asociados se elimina; con registros se desactiva; los elementos inactivos se conservan en registros existentes (RN-42, RN-44). |
+| D-19 | 2026-11-27 | Hay un instalador del primer hito para usar la aplicación con datos reales mientras se construyen los reportes. |
+| D-20 | 2026-11-27 | Los datos iniciales vienen dentro del instalador y se cargan una sola vez, al crear la base por primera vez; nunca al actualizar. El archivo real no se versiona; el repositorio solo tiene un ejemplo ficticio. |
+| D-21 | 2026-11-27 | Los datos históricos se cargan con una conversión única fuera de la aplicación: hacia una base nueva si llegan antes del primer uso, o hacia una copia respaldada de la base en uso si llegan después. Se importan los valores realmente cobrados y pagados, no se inventa información faltante y los datos no se versionan. |
 
 ### 9.2 Preguntas abiertas
 
 | ID | Pregunta | Impacto |
 |---|---|---|
 | P-02 | Proveedor de nube para el respaldo (OneDrive o Google Drive). | Ninguno en el código. |
-| P-04 | Datos iniciales a precargar (D-03). | Datos semilla. |
+| P-04 | Datos iniciales a precargar (D-03, D-20). | Bloquea el instalador del primer hito. |
+| P-07 | Volumen y formato de los datos históricos (D-21). | Bloquea la conversión de datos históricos. |
 
 ## 10. Criterios de aceptación generales
 

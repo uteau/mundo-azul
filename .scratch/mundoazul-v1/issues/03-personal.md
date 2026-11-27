@@ -6,7 +6,9 @@
 
 **Status:** ready-for-agent
 
-- [ ] Se puede crear, editar y desactivar guías y trabajadores; cada persona tiene un solo rol.
-- [ ] Un guía se puede marcar como dueño.
+- [ ] Se puede crear, editar y desactivar guías y trabajadores; cada persona tiene un solo rol, que no cambia después de crearla.
+- [ ] Una persona sin registros se puede eliminar con confirmación; una con registros solo se desactiva.
+- [ ] Un guía se puede marcar como dueño; hay como máximo un dueño.
+- [ ] La marca de dueño solo se pone o se quita en un guía sin asignaciones ni bonos (este caso rechazado se prueba en 08, cuando existen bonos y asignaciones).
 - [ ] Cada trabajador tiene un histórico de sueldo diario con vigencias; las pruebas verifican el sueldo vigente a una fecha.
 - [ ] Una persona desactivada no aparece en formularios nuevos, pero conserva su historia.

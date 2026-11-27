@@ -30,7 +30,7 @@ Cantidad de personas de un servicio que un guía llevó bajo su cargo en un día
 _Evitar_: salida, atención
 
 **Vigencia**:
-Fecha desde la cual rige un precio, una comisión o un sueldo; reemplaza al anterior sin borrarlo.
+Fecha desde la cual rige un precio, una comisión o un sueldo; reemplaza al anterior sin borrarlo. Un cambio de vigencia solo afecta lo que se registra después: no altera ventas ni asignaciones ya registradas.
 _Evitar_: precio del año, temporada
 
 ## Personal y remuneraciones
@@ -40,18 +40,18 @@ Miembro del personal que lleva clientes bajo su cargo en el agua y gana una comi
 _Evitar_: buzo (los clientes también bucean), instructor
 
 **Comisión**:
-Monto que gana un guía por cada cliente que lleva, según el servicio que contrató ese cliente. Es igual para todos los guías y no la afectan los descuentos.
+Monto que gana un guía por cada cliente que lleva, según el servicio que contrató ese cliente. Es igual para todos los guías y no la afectan los descuentos. La comisión de una asignación es la vigente a su fecha cuando se registra, y no cambia después.
 _Evitar_: tarifa de guía, pago por cliente
 
 **Dueño**:
-Guía que puede tener asignaciones, pero a quien no se le calcula comisión.
+Guía que puede tener asignaciones, pero que no gana comisión ni bonos. Hay como máximo uno.
 
 **Trabajador**:
 Miembro del personal que no lleva clientes y gana un sueldo fijo por cada día trabajado.
 _Evitar_: trabajador no buzo, empleado
 
 **Bono**:
-Monto extra que el administrador asigna a criterio a un guía o trabajador por un día de trabajo.
+Monto extra que el administrador asigna a criterio a un guía o trabajador por un día de trabajo. El dueño no recibe bonos.
 
 **Remuneraciones**:
 Todo lo que gana el personal en un período: comisiones, sueldos diarios y bonos.

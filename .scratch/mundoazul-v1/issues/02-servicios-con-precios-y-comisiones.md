@@ -7,7 +7,9 @@
 **Status:** ready-for-agent
 
 - [ ] Se puede crear, renombrar y desactivar un servicio; uno desactivado no se ofrece en formularios nuevos, pero conserva su historia.
-- [ ] Se puede agregar, editar y eliminar vigencias de precio y de comisión; agregar una nueva no borra las anteriores.
+- [ ] Un servicio sin registros se puede eliminar con sus vigencias, con confirmación; uno con registros se rechaza y solo se desactiva.
+- [ ] Se puede agregar, editar y eliminar vigencias de precio y de comisión, con fecha de inicio pasada o futura; agregar una nueva no borra las anteriores.
+- [ ] Al editar o eliminar una vigencia, el editor avisa que solo afecta registros nuevos (ADR-0003).
 - [ ] El listado muestra el precio y la comisión vigentes hoy.
 - [ ] Pruebas de vigencia a la fecha exacta de inicio, entre dos vigencias y antes de la primera (sin valor: error que pide definirlo).
 - [ ] El editor de vigencias es un componente reutilizable.

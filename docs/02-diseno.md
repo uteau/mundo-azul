@@ -2,8 +2,8 @@
 
 | Campo | Valor |
 |---|---|
-| Versión | 2.0 |
-| Fecha | 2026-11-20 |
+| Versión | 2.1 |
+| Fecha | 2026-11-27 |
 | Requerimientos | `docs/01-requerimientos.md` |
 | Glosario | `GLOSSARY.md` |
 | ADRs | `docs/adr/` |
@@ -20,7 +20,7 @@
 | D-03 | El frontend se comunica solo mediante **comandos Tauri** (`invoke`) tipados. | Frontera clara; el frontend no conoce SQL. |
 | D-04 | Montos como `INTEGER` (pesos). Fechas como `TEXT` ISO `YYYY-MM-DD`. | RNF-05; las fechas ISO se ordenan y comparan como texto. |
 | D-05 | Histórico de valores mediante tablas de **vigencias** (`vigente_desde`). | S-02: soporta temporadas que cruzan el año. |
-| D-06 | El precio unitario se **copia** al ítem de venta (snapshot). Comisiones y sueldos se **resuelven por fecha** al calcular. | RN-03 exige fijar el precio; las comisiones son deterministas desde su histórico. El monto del día trabajado sí se guarda (RN-29). |
+| D-06 | El precio unitario se **copia** al ítem de venta y la comisión a la asignación (snapshot). El monto del día trabajado también se guarda. | RN-03, RN-23, RN-29: un cambio de vigencia nunca altera lo ya registrado (ADR-0003). |
 | D-07 | Los reportes se calculan **al vuelo** (SQL + combinación en Rust), sin tablas agregadas. | Volumen bajo (RNF-07); evita inconsistencias al editar (RN-43). |
 | D-08 | Migraciones con **`rusqlite_migration`**, embebidas en el binario. | RNF-10. |
 | D-09 | Frontend: **TanStack Query**, **React Router**, **React Hook Form + Zod**, **Recharts**. | Herramientas estándar; invalidación de caché simple tras cada mutación. |
@@ -28,6 +28,7 @@
 | D-11 | **Asignaciones sin vínculo a ventas ni salidas**: tabla `asignacion(fecha, guia, servicio, cantidad)` y cuadre por día y servicio. | ADR-0001. |
 | D-12 | **Inasistencias en el ítem de venta** (`inasistencias`, `abono_retenido`); no hay estado "cancelada". | ADR-0002. |
 | D-13 | Montos de venta (bruto, neto, ingreso) **no se almacenan**: se derivan de ítems y descuento. | Una sola fuente de verdad; las ediciones de inasistencias no dejan totales desfasados. |
+| D-14 | **Datos iniciales** en un archivo embebido en el instalador, cargado con las funciones de servicio una sola vez, cuando la base se crea. No es una migración. | Requerimientos D-20: una actualización nunca revive ni pisa datos editados. |
 
 ## 2. Arquitectura
 
@@ -108,6 +109,7 @@ CREATE TABLE personal (
   activo    INTEGER NOT NULL DEFAULT 1 CHECK (activo IN (0,1)),
   CHECK (es_dueno = 0 OR rol = 'guia')
 );
+CREATE UNIQUE INDEX ux_personal_dueno ON personal(es_dueno) WHERE es_dueno = 1;  -- RN-27
 
 CREATE TABLE sueldo_trabajador (
   id             INTEGER PRIMARY KEY,
@@ -160,7 +162,8 @@ CREATE TABLE venta_item (
   inasistencias    INTEGER NOT NULL DEFAULT 0 CHECK (inasistencias >= 0),
   abono_retenido   INTEGER NOT NULL DEFAULT 0 CHECK (abono_retenido >= 0),
   CHECK (inasistencias <= cantidad),
-  CHECK (inasistencias > 0 OR abono_retenido = 0)                  -- RN-07
+  CHECK (inasistencias > 0 OR abono_retenido = 0),                 -- RN-07
+  UNIQUE (venta_id, servicio_id)                                   -- RN-02
 );
 CREATE INDEX idx_venta_item_venta ON venta_item(venta_id);
 
@@ -170,6 +173,7 @@ CREATE TABLE asignacion (
   guia_id      INTEGER NOT NULL REFERENCES personal(id) ON DELETE RESTRICT,
   servicio_id  INTEGER NOT NULL REFERENCES servicio(id) ON DELETE RESTRICT,
   cantidad     INTEGER NOT NULL CHECK (cantidad >= 1),
+  comision     INTEGER NOT NULL CHECK (comision >= 0),  -- snapshot, 0 para el dueño (ADR-0003)
   UNIQUE (fecha, guia_id, servicio_id)          -- RN-17
 );
 CREATE INDEX idx_asignacion_fecha ON asignacion(fecha);
@@ -219,6 +223,12 @@ CREATE TABLE configuracion (
 | `personal.rol = 'guia'` en `asignacion.guia_id` | RN-17 | `services::asignaciones` |
 | Existe vigencia para la fecha (precio al crear ítem; comisión al asignar; sueldo al registrar día) | RN-25 | servicios correspondientes |
 | Cuadre por (fecha, servicio): Σ `asignacion.cantidad` = Σ personas que bucearon | RN-20 | `services::dia` — **aviso**, no bloquea |
+| Precio de ítems al editar: se conserva si el ítem conserva servicio y la venta su fecha; si no, se toma el vigente | RN-03 | `services::ventas` |
+| Comisión al guardar el día: un par (guía, servicio) que ya existía conserva su `comision`; uno nuevo toma la vigente (0 si es dueño) | RN-23, ADR-0003 | `services::dia` |
+| El dueño no tiene bonos; `es_dueno` solo cambia si el guía no tiene asignaciones ni bonos; `rol` no cambia | RN-27, RN-32 | `services::personal` |
+| Fecha ≤ hoy en ventas, asignaciones, días trabajados, bonos, costos y otros ingresos | RN-01, RN-45 | servicios correspondientes (hoy se recibe como parámetro para poder probarlo) |
+| Eliminar servicio, persona, categoría o motivo solo sin registros; categorías fijas no se eliminan ni renombran | RN-42 | servicios correspondientes |
+| Elementos inactivos: se rechazan en registros nuevos, se aceptan si ya estaban en el registro editado | RN-44 | servicios correspondientes |
 
 Como las asignaciones no referencian ventas, cambiar la fecha o las cantidades de una venta nunca se bloquea: solo puede descuadrar los días afectados.
 
@@ -261,20 +271,16 @@ Los reportes por servicio leen `v_venta_item` por rango y aplican `repartir_desc
 
 **Ingresos** (RN-38) = Σ bruto − Σ descuento + Σ abono_retenido (de `v_venta_item` / `venta`) + Σ `otro_ingreso.monto`.
 
-**Comisiones por día** (RN-26, RN-27): vista SQL.
+**Comisiones por día** (RN-26, RN-27): vista SQL sobre la comisión guardada en cada asignación (ADR-0003).
 
 ```sql
 CREATE VIEW v_comision_detalle AS
-SELECT a.fecha, a.guia_id, a.servicio_id, a.cantidad AS personas,
-       CASE WHEN p.es_dueno = 1 THEN 0 ELSE
-         (SELECT c.monto FROM comision c
-          WHERE c.servicio_id = a.servicio_id AND c.vigente_desde <= a.fecha
-          ORDER BY c.vigente_desde DESC LIMIT 1)
-       END AS comision
-FROM asignacion a JOIN personal p ON p.id = a.guia_id;
+SELECT a.fecha, a.guia_id, a.servicio_id, a.cantidad AS personas, a.comision,
+       a.cantidad * a.comision AS total
+FROM asignacion a;
 ```
 
-Pago del guía en el día = Σ `personas × comision` + Σ bonos de ese guía y fecha (los bonos del dueño también se ignoran).
+Pago del guía en el día = Σ `personas × comision` + Σ bonos de ese guía y fecha (el dueño no tiene bonos).
 
 **Pago a trabajadores por día** (RN-28) = `dia_trabajado.monto` + Σ bonos del día.
 
@@ -294,7 +300,7 @@ SELECT servicio_id, SUM(vendidas) AS bucearon, SUM(asignadas) AS asignadas FROM 
 
 **Agrupación por período** (RF-27): diario `fecha`, mensual `substr(fecha,1,7)`.
 
-**Comparación entre años** (RF-28): el rango A es el elegido; el rango B es el mismo rango trasladado al año de comparación (mismo día y mes; si el rango cruza el cambio de año, ambos extremos se trasladan la misma cantidad de años; 29-02 → 28-02 en años no bisiestos). Se ejecuta la misma consulta por servicio para A y B; Rust combina por `servicio_id` y calcula `diferencia = B − A` y `variacion_pct = (B − A) / A` (nulo si A = 0).
+**Comparación entre años** (RF-28): el rango A es el elegido; el rango B es A trasladado de modo que su inicio caiga en el año de comparación (mismo día y mes; ambos extremos se trasladan la misma cantidad de años, así que un rango que cruza el cambio de año se traslada completo; 29-02 → 28-02 en años no bisiestos). El año de comparación puede ser anterior o posterior. Se ejecuta la misma consulta por servicio para A y B; Rust combina por `servicio_id` (un servicio ausente en un rango aparece con 0) y calcula `diferencia = A − B` y `variacion_pct = (A − B) / B` (nulo, "sin base", si B = 0).
 
 ## 4. API de comandos Tauri
 
@@ -302,12 +308,12 @@ Todos devuelven `Result<T, AppError>`. Los tipos se espejan en `src/lib/types.ts
 
 | Módulo | Comandos |
 |---|---|
-| servicios | `servicios_listar`, `servicio_guardar`, `servicio_set_activo`, `precios_listar(servicio_id)`, `precio_guardar`, `precio_eliminar`, `comisiones_listar(servicio_id)`, `comision_guardar`, `comision_eliminar`, `precio_vigente(servicio_id, fecha)` |
-| personal | `personal_listar(rol?)`, `personal_guardar`, `personal_set_activo`, `sueldos_listar`, `sueldo_guardar`, `sueldo_eliminar`, `dias_trabajados_listar(rango, personal_id?)`, `dias_trabajados_registrar(fecha, [{personal_id, monto}])`, `dia_trabajado_actualizar`, `dia_trabajado_eliminar`, `bonos_listar(rango, personal_id?)`, `bono_guardar`, `bono_eliminar` |
-| ventas | `ventas_listar(filtros)`, `venta_obtener(id)`, `venta_guardar(VentaInput)` (venta + ítems en una transacción), `venta_eliminar(id)`, `venta_calcular(VentaInput)` (previsualización), `motivos_listar`, `motivo_guardar`, `motivo_set_activo` |
+| servicios | `servicios_listar`, `servicio_guardar`, `servicio_set_activo`, `servicio_eliminar`, `precios_listar(servicio_id)`, `precio_guardar`, `precio_eliminar`, `comisiones_listar(servicio_id)`, `comision_guardar`, `comision_eliminar`, `precio_vigente(servicio_id, fecha)` |
+| personal | `personal_listar(rol?)`, `personal_guardar`, `personal_set_activo`, `personal_eliminar`, `sueldos_listar`, `sueldo_guardar`, `sueldo_eliminar`, `dias_trabajados_listar(rango, personal_id?)`, `dias_trabajados_registrar(fecha, [{personal_id, monto}])`, `dia_trabajado_actualizar`, `dia_trabajado_eliminar`, `bonos_listar(rango, personal_id?)`, `bono_guardar`, `bono_eliminar` |
+| ventas | `ventas_listar(filtros)`, `venta_obtener(id)`, `venta_guardar(VentaInput)` (venta + ítems en una transacción), `venta_eliminar(id)`, `venta_calcular(VentaInput)` (previsualización), `motivos_listar`, `motivo_guardar`, `motivo_set_activo`, `motivo_eliminar` |
 | dia | `dia_obtener(fecha)` → `{ ventas, bucearon_por_servicio, asignaciones, descuadres, dias_trabajados, bonos }`, `asignaciones_guardar(fecha, [{guia_id, servicio_id, cantidad}])` (reemplaza las del día en una transacción), `dias_descuadrados(rango)` |
-| costos | `categorias_costo_listar`, `categoria_costo_guardar`, `categoria_costo_set_activa`, `costos_listar(filtros)`, `costo_guardar`, `costo_eliminar` |
-| otros_ingresos | `categorias_otro_ingreso_listar`, `categoria_otro_ingreso_guardar`, `categoria_otro_ingreso_set_activa`, `otros_ingresos_listar(filtros)`, `otro_ingreso_guardar`, `otro_ingreso_eliminar` |
+| costos | `categorias_costo_listar`, `categoria_costo_guardar`, `categoria_costo_set_activa`, `categoria_costo_eliminar`, `costos_listar(filtros)`, `costo_guardar`, `costo_eliminar` |
+| otros_ingresos | `categorias_otro_ingreso_listar`, `categoria_otro_ingreso_guardar`, `categoria_otro_ingreso_set_activa`, `categoria_otro_ingreso_eliminar`, `otros_ingresos_listar(filtros)`, `otro_ingreso_guardar`, `otro_ingreso_eliminar` |
 | reportes | `remuneraciones_guias(rango)`, `remuneraciones_trabajadores(rango)`, `dash_ventas_por_servicio(rango, periodo, servicio_ids?)`, `dash_comparacion(rango, anio_comparacion)`, `dash_ganancias_personal(rango, periodo)`, `dash_costos(rango, periodo, categoria_ids?)`, `dash_otros_ingresos(rango, periodo)`, `dash_utilidad(rango, periodo)`, `dash_margen_servicio(rango, periodo)`, `dash_inasistencias(rango, periodo)`, `dash_descuentos(rango, periodo)` |
 | respaldo | `respaldo_config_obtener`, `respaldo_config_guardar(carpeta, max_versiones)`, `respaldo_ejecutar` → `{ archivo, fecha }`, `respaldo_estado` |
 
@@ -319,6 +325,11 @@ Todos devuelven `Result<T, AppError>`. Los tipos se espejan en `src/lib/types.ts
 4. **Al cerrar**: `WindowEvent::CloseRequested` → `api.prevent_close()` → overlay "Respaldando…" → respaldo en un hilo → `app.exit(0)` con éxito o fallo (RNF-09). Timeout de 30 s, sin reentrada.
 5. **Estado**: `backup.ultimo_ok` / `backup.ultimo_error`; la barra lateral muestra "Último respaldo: hace 2 h" o un aviso en rojo.
 6. **Restauración**: manual (cerrar la app y copiar el respaldo sobre `mundoazul.sqlite` en AppData).
+
+## 5.1 Datos iniciales y datos históricos
+
+- **Datos iniciales** (D-14, requerimientos D-20): un archivo de datos (servicios con vigencias, personal con sueldos, categorías y motivos) se embebe al compilar el instalador. Al iniciar, si la base no existía, se aplican las migraciones y luego se carga el archivo con las funciones de servicio, en una transacción. Si la base ya existía, nunca se carga. El archivo real está en `.gitignore`; el repositorio tiene un ejemplo ficticio que usan las pruebas y el desarrollo.
+- **Datos históricos** (requerimientos D-21): un conversor de un solo uso, fuera de la aplicación, que escribe en una base nueva o en una copia respaldada de la base en uso, con el esquema vigente. Respeta las reglas de negocio, salvo que guarda los precios y comisiones realmente cobrados y pagados. Lo que no calce se lista para decidir. Su diseño concreto espera la muestra de datos (P-07).
 
 ## 6. Frontend
 
@@ -385,7 +396,7 @@ mundoazul/
   src-tauri/
     src/
       main.rs, lib.rs, error.rs, state.rs
-      db/        mod.rs, migrations/ (001_inicial.sql, 002_vistas.sql, 003_semillas.sql)
+      db/        mod.rs, migrations/ (001_inicial.sql, 002_vistas.sql), datos_iniciales.rs
       domain/    venta (cálculo y reparto de descuento), vigencia, periodo
       repo/      un módulo por agregado
       services/  ventas.rs, dia.rs, personal.rs, servicios.rs, costos.rs, otros_ingresos.rs
@@ -400,11 +411,9 @@ mundoazul/
 
 | Nivel | Herramienta | Qué cubre |
 |---|---|---|
-| Unitarias Rust | `cargo test` | Cálculo de venta con inasistencias, abono propuesto, reparto de descuento por mayor resto, resolución de vigencias, claves de período, rotación de respaldos. |
-| Integración Rust | `cargo test` con SQLite en memoria + migraciones | Servicios y reportes contra un **dataset de referencia** con totales calculados a mano. Cuadre del día, vigencias, duplicados de día trabajado, dueño sin comisión. |
+| Costura de servicio | `cargo test` con SQLite en memoria + migraciones | La única costura automática: se llama a las funciones de servicio y se verifican resultados de negocio. Cálculo de venta con inasistencias, abono propuesto, reparto de descuento por mayor resto (a través de los reportes por servicio), vigencias, cuadre del día, duplicados de día trabajado, dueño sin comisión ni bonos, carga de datos iniciales, y reportes contra un **dataset de referencia** con totales calculados a mano. |
 | Respaldo | `cargo test` con directorio temporal | `integrity_check`, nombre con fecha, rotación, fallo controlado si la carpeta no existe. |
-| Unitarias frontend | Vitest | `format.ts`, `dates.ts`, esquemas Zod. |
-| Manual | Lista de verificación | Instalador en Windows, cierre con respaldo, funcionamiento sin red. |
+| Manual | Lista de verificación | Pantallas y flujo de registro (venta en < 30 s), instalador en Windows, cierre con respaldo, funcionamiento sin red. El frontend no tiene pruebas automáticas. |
 
 ## 9. Empaquetado
 

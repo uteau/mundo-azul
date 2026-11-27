@@ -10,6 +10,6 @@
 - [ ] Incluye inasistencias parciales y una venta con todas sus personas inasistentes.
 - [ ] Incluye descuentos sobre ventas de varios servicios, con resto no divisible.
 - [ ] Incluye al dueño con asignaciones, un día descuadrado, bonos (uno a un guía sin asignaciones), costos y otros ingresos.
-- [ ] Los totales esperados (por persona, por servicio, por categoría, utilidad) están calculados a mano y documentados.
+- [ ] Los totales esperados (por persona, por servicio, por categoría, utilidad) están calculados a mano y documentados, y el administrador los revisa antes de cerrar el ticket.
 - [ ] La prueba de remuneraciones contra este dataset pasa.
 - [ ] El dataset es reutilizable por las pruebas de los reportes del dashboard.

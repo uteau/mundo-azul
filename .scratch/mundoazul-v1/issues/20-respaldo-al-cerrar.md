@@ -10,3 +10,4 @@
 - [ ] Con una carpeta inexistente, la aplicación cierra igual y el error queda registrado.
 - [ ] Al vencer el tiempo límite la aplicación cierra sin corromper la base.
 - [ ] No hay reentrada: un segundo intento de cierre durante el respaldo no inicia otro.
+- [ ] Verificación manual en Windows: cerrar con una carpeta válida y con una inexistente.
